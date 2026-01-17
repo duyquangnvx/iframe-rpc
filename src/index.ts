@@ -218,7 +218,13 @@ type CallProxy<T extends MethodContract> = {
     : never;
 };
 
+/**
+ * Bridge interface for bidirectional RPC communication
+ * @typeParam _TLocal - Local method handlers (unused, retained for API symmetry)
+ * @typeParam TRemote - Remote methods available to call
+ */
 export interface Bridge<
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _TLocal extends MethodContract,
     TRemote extends MethodContract
 > {
@@ -275,6 +281,10 @@ function createBridge<
 
         switch (data.type) {
             case MESSAGE_TYPE.REQUEST:
+                if (!event.source) {
+                    logger.error('Request received with null source');
+                    return;
+                }
                 handleRequest(data as RequestMessage, event.source as Window);
                 break;
             case MESSAGE_TYPE.RESPONSE:
@@ -434,7 +444,9 @@ function createBridge<
 
     // Create call proxy with type safety
     const call = new Proxy({} as CallProxy<TRemote>, {
-        get(_, prop: string) {
+        get(_, prop) {
+            // Handle Symbol properties (e.g., Symbol.toStringTag, Symbol.iterator)
+            if (typeof prop === 'symbol') return undefined;
             return (...args: unknown[]) => callMethod(prop as keyof TRemote, args);
         },
     });
