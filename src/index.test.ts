@@ -530,4 +530,122 @@ describe('Message Filtering', () => {
 
     expect(handlers.test).not.toHaveBeenCalled();
   });
+
+  it('should reject messages from untrusted origin when targetOrigin is specified', () => {
+    const handlers = {
+      test: vi.fn(),
+    };
+
+    createParentBridge(
+      mockIframe as unknown as HTMLIFrameElement,
+      handlers,
+      { targetOrigin: 'https://trusted.com' }
+    );
+
+    // Send message from different origin
+    const untrustedEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.REQUEST,
+        channel: 'default',
+        id: 'test',
+        method: 'test',
+        args: [],
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+    // Override origin for test
+    Object.defineProperty(untrustedEvent, 'origin', { value: 'https://untrusted.com' });
+
+    messageListeners.forEach((l) => l(untrustedEvent));
+
+    expect(handlers.test).not.toHaveBeenCalled();
+  });
+
+  it('should accept messages from trusted origin when targetOrigin is specified', async () => {
+    const handlers = {
+      test: vi.fn().mockResolvedValue('success'),
+    };
+
+    createParentBridge(
+      mockIframe as unknown as HTMLIFrameElement,
+      handlers,
+      { targetOrigin: 'https://trusted.com' }
+    );
+
+    // Send message from trusted origin
+    const trustedEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.REQUEST,
+        channel: 'default',
+        id: 'test',
+        method: 'test',
+        args: [],
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+    Object.defineProperty(trustedEvent, 'origin', { value: 'https://trusted.com' });
+
+    messageListeners.forEach((l) => l(trustedEvent));
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(handlers.test).toHaveBeenCalled();
+  });
+
+  it('should accept messages from any origin when targetOrigin is wildcard', () => {
+    const handlers = {
+      test: vi.fn(),
+    };
+
+    createParentBridge(
+      mockIframe as unknown as HTMLIFrameElement,
+      handlers,
+      { targetOrigin: '*' }
+    );
+
+    // Send message from any origin
+    const anyOriginEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.REQUEST,
+        channel: 'default',
+        id: 'test',
+        method: 'test',
+        args: [],
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+    Object.defineProperty(anyOriginEvent, 'origin', { value: 'https://random-site.com' });
+
+    messageListeners.forEach((l) => l(anyOriginEvent));
+
+    expect(handlers.test).toHaveBeenCalled();
+  });
+
+  it('should ignore messages with invalid type field', () => {
+    const handlers = {
+      test: vi.fn(),
+    };
+
+    createParentBridge(mockIframe as unknown as HTMLIFrameElement, handlers);
+
+    // Send message with invalid type
+    const invalidTypeEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: 'invalid-type',
+        channel: 'default',
+        id: 'test',
+        method: 'test',
+        args: [],
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+
+    messageListeners.forEach((l) => l(invalidTypeEvent));
+
+    expect(handlers.test).not.toHaveBeenCalled();
+  });
 });

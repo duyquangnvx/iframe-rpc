@@ -159,16 +159,36 @@ const DEFAULT_OPTIONS: Required<BridgeOptions> = {
 // ============================================================================
 
 function generateId(): string {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    // Fallback with better entropy using getRandomValues when available
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+        const array = new Uint32Array(2);
+        crypto.getRandomValues(array);
+        return `${array[0].toString(16)}-${array[1].toString(16)}-${Date.now().toString(36)}`;
+    }
     return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
+
+// Cache valid message types for performance
+const VALID_MESSAGE_TYPES = new Set(Object.values(MESSAGE_TYPE));
 
 function isRpcMessage(data: unknown): data is RpcMessage {
     return (
         typeof data === 'object' &&
         data !== null &&
         '__iframeRpc' in data &&
-        (data as any).__iframeRpc === true
+        (data as any).__iframeRpc === true &&
+        'type' in data &&
+        VALID_MESSAGE_TYPES.has((data as any).type)
     );
+}
+
+function warnIfInsecureOrigin(options: Required<BridgeOptions>): void {
+    if (options.debug && options.targetOrigin === '*') {
+        console.warn('[iframe-rpc] Using targetOrigin:"*" is insecure for production. Consider specifying an exact origin.');
+    }
 }
 
 function createLogger(debug: boolean, prefix: string) {
@@ -240,6 +260,12 @@ function createBridge<
     // Handle incoming messages
     const handleMessage = (event: MessageEvent) => {
         if (isDestroyed) return;
+
+        // Validate origin when targetOrigin is specified
+        if (options.targetOrigin !== '*' && event.origin !== options.targetOrigin) {
+            logger.log('Rejected message from untrusted origin:', event.origin);
+            return;
+        }
 
         const data = event.data;
         if (!isRpcMessage(data)) return;
@@ -475,6 +501,8 @@ export function createParentBridge<
     }
 
     const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+    warnIfInsecureOrigin(mergedOptions);
+
     return createBridge<TLocal, TRemote>(
         iframe.contentWindow,
         handlers,
@@ -513,6 +541,8 @@ export function createIframeBridge<
     }
 
     const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+    warnIfInsecureOrigin(mergedOptions);
+
     return createBridge<TLocal, TRemote>(
         window.parent,
         handlers,
