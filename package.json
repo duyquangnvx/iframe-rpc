@@ -36,7 +36,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "demo": "pnpm build && node demo/server.js"
   },
   "peerDependencies": {
     "zod": "^3.0.0"

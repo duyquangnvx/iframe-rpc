@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Child Iframe - Bridge Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      min-height: 100vh;
+      padding: 15px;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      padding: 15px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    }
+    h1 {
+      color: #374151;
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 15px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+    .badge.disconnected { background: #fecaca; color: #dc2626; }
+    .badge.connected { background: #bbf7d0; color: #16a34a; }
+
+    .info {
+      background: #f3f4f6;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .info strong { color: #374151; }
+
+    .methods {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .method {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 11px;
+    }
+    .method-name {
+      font-weight: 600;
+      color: #059669;
+      font-family: monospace;
+    }
+    .method-desc {
+      color: #6b7280;
+      margin-top: 2px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-primary { background: #10b981; color: white; }
+
+    .log {
+      background: #1f2937;
+      border-radius: 8px;
+      padding: 10px;
+      height: 80px;
+      overflow-y: auto;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 10px;
+    }
+    .log-entry {
+      padding: 2px 0;
+      color: #d1d5db;
+    }
+    .log-entry .time { color: #6b7280; }
+    .log-entry .msg { color: #34d399; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>
+      Child Iframe
+      <span id="status" class="badge disconnected">Waiting...</span>
+    </h1>
+
+    <div class="info">
+      <strong>Exposed Methods:</strong> math/add, greeting/hello, time/now, counter/increment
+    </div>
+
+    <div class="methods">
+      <div class="method">
+        <div class="method-name">math/add</div>
+        <div class="method-desc">Adds two numbers</div>
+      </div>
+      <div class="method">
+        <div class="method-name">greeting/hello</div>
+        <div class="method-desc">Returns greeting</div>
+      </div>
+      <div class="method">
+        <div class="method-name">time/now</div>
+        <div class="method-desc">Current time</div>
+      </div>
+      <div class="method">
+        <div class="method-name">counter/increment</div>
+        <div class="method-desc">Increment counter</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btn-notify" class="btn-primary" disabled>Send Notification to Parent</button>
+      <button id="btn-get-config" class="btn-primary" disabled>Get Parent Config</button>
+    </div>
+
+    <div id="log" class="log"></div>
+  </div>
+
+  <script type="module">
+    import { ChildBridge } from '../dist/index.js';
+
+    const statusBadge = document.getElementById('status');
+    const logContainer = document.getElementById('log');
+    const btnNotify = document.getElementById('btn-notify');
+    const btnGetConfig = document.getElementById('btn-get-config');
+
+    let counter = 0;
+
+    function log(message) {
+      const time = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="time">${time}</span> <span class="msg">${message}</span>`;
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    function updateStatus(connected) {
+      statusBadge.textContent = connected ? 'Connected' : 'Waiting...';
+      statusBadge.className = `badge ${connected ? 'connected' : 'disconnected'}`;
+      btnNotify.disabled = !connected;
+      btnGetConfig.disabled = !connected;
+    }
+
+    // Child methods that parent can call
+    const childMethods = {
+      'math/add': async ({ a, b }) => {
+        log(`math/add called: ${a} + ${b}`);
+        return { sum: a + b };
+      },
+
+      'greeting/hello': async ({ name }) => {
+        log(`greeting/hello called: ${name}`);
+        return { message: `Hello, ${name}! Greetings from the iframe.` };
+      },
+
+      'time/now': async () => {
+        const time = new Date().toISOString();
+        log(`time/now called`);
+        return { time };
+      },
+
+      'counter/increment': async () => {
+        counter++;
+        log(`counter/increment called: ${counter}`);
+        return { value: counter };
+      }
+    };
+
+    // Create bridge
+    const bridge = new ChildBridge({
+      origin: window.location.origin,
+      methods: childMethods,
+      debug: true,
+    });
+
+    log('Child bridge created, waiting for parent...');
+
+    // Watch for connection
+    const checkConnection = setInterval(() => {
+      if (bridge.isConnected()) {
+        clearInterval(checkConnection);
+        updateStatus(true);
+        log(`Connected to parent! Parent methods: ${bridge.getParentMethods().join(', ')}`);
+      }
+    }, 100);
+
+    // Send notification to parent
+    btnNotify.addEventListener('click', async () => {
+      try {
+        log('Sending notification to parent...');
+        const result = await bridge.call('parent/notify', {
+          message: 'Hello from child! Counter is ' + counter
+        });
+        log(`Parent acknowledged: ${JSON.stringify(result)}`);
+      } catch (error) {
+        log(`Error: ${error.message}`);
+      }
+    });
+
+    // Get config from parent
+    btnGetConfig.addEventListener('click', async () => {
+      try {
+        log('Requesting config from parent...');
+        const config = await bridge.call('parent/getConfig', {});
+        log(`Got config: ${JSON.stringify(config)}`);
+      } catch (error) {
+        log(`Error: ${error.message}`);
+      }
+    });
+  </script>
+</body>
+</html>

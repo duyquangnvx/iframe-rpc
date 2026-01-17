@@ -12,7 +12,8 @@
       "Bash(pnpm lint:fix:*)",
       "Bash(pnpm test:*)",
       "Bash(awk:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(node demo/server.js:*)"
     ]
   }
 }

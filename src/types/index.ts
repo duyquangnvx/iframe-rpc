@@ -15,6 +15,8 @@ export type {
   PartialHandlers,
 } from "./contract";
 
+export { createHandlers } from "./contract";
+
 // Message types
 export {
   MessageType,

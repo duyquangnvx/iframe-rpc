@@ -549,3 +549,32 @@ export type {
     ErrorMessage,
     FireAndForgetMessage,
 };
+
+
+// Methods the parent exposes to the iframe
+export type ParentMethods = DefineContract<{
+    getUser: (id: string) => Promise<{ name: string; email: string }>;
+    saveData: (key: string, value: unknown) => Promise<boolean>;
+    showNotification: (message: string) => void; // fire-and-forget
+}>;
+
+// Methods the iframe exposes to the parent
+export type IframeMethods = DefineContract<{
+    initialize: (config: { theme: string }) => Promise<void>;
+    getStatus: () => Promise<'ready' | 'loading' | 'error'>;
+    updateTheme: (theme: 'light' | 'dark') => void; // fire-and-forget
+}>;
+
+const bridge = createIframeBridge<IframeMethods, ParentMethods>(
+    {
+        // Implement handlers for methods the parent can call
+        initialize: async (config) => {
+            console.log('Initialized with:', config);
+        },
+        getStatus: async () => 'ready',
+        updateTheme: (theme) => {
+            document.body.className = theme;
+        },
+    },
+    { timeout: 10000 }
+);
