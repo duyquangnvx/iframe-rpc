@@ -1,0 +1,22 @@
+# Source
+src/
+tests/
+
+# Configs
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+biome.json
+.gitignore
+.github/
+
+# Development
+coverage/
+*.log
+.vscode/
+.idea/
+
+# Plans and docs (internal)
+plans/
+docs/
+.claude/
