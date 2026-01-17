@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iframe-rpc Demo - Parent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; background: #f5f5f5; }
+        h1 { margin-bottom: 10px; color: #333; }
+        .status { padding: 8px 12px; border-radius: 4px; margin-bottom: 15px; font-size: 14px; }
+        .status.active { background: #d4edda; color: #155724; }
+        .status.inactive { background: #f8d7da; color: #721c24; }
+        .section { background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .section h2 { font-size: 14px; color: #666; margin-bottom: 10px; text-transform: uppercase; }
+        .controls { display: flex; flex-wrap: wrap; gap: 8px; }
+        button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: all 0.2s; }
+        button.primary { background: #007bff; color: white; }
+        button.primary:hover { background: #0056b3; }
+        button.success { background: #28a745; color: white; }
+        button.success:hover { background: #1e7e34; }
+        button.warning { background: #ffc107; color: #212529; }
+        button.warning:hover { background: #d39e00; }
+        button.danger { background: #dc3545; color: white; }
+        button.danger:hover { background: #bd2130; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .input-group { display: flex; gap: 8px; align-items: center; }
+        iframe { width: 100%; height: 300px; border: 2px solid #ddd; border-radius: 4px; background: white; }
+        #console { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; height: 200px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 12px; }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+        .log-entry.info { color: #9cdcfe; }
+        .log-entry.success { color: #4ec9b0; }
+        .log-entry.error { color: #f48771; }
+        .log-entry.warn { color: #dcdcaa; }
+        .log-time { color: #666; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Parent Window</h1>
+    <div id="bridgeStatus" class="status inactive">Bridge: Not initialized</div>
+
+    <div class="section">
+        <h2>Call Iframe Methods</h2>
+        <div class="controls">
+            <button id="btnGetStatus" class="primary">call.getStatus()</button>
+            <div class="input-group">
+                <input type="text" id="themeInput" value="dark" placeholder="theme">
+                <button id="btnInitialize" class="primary">call.initialize({theme})</button>
+            </div>
+            <button id="btnGetData" class="success">call.getData()</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Dynamic Invoke</h2>
+        <div class="controls">
+            <div class="input-group">
+                <input type="text" id="invokeMethod" value="getStatus" placeholder="method">
+                <input type="text" id="invokeArgs" placeholder="args (JSON)">
+                <button id="btnInvoke" class="warning">invoke(method, ...args)</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Notifications (Fire-and-Forget)</h2>
+        <div class="controls">
+            <div class="input-group">
+                <input type="text" id="notifyMessage" value="Hello from parent!" placeholder="message">
+                <button id="btnNotify" class="success">notify('log', message)</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Bridge Lifecycle</h2>
+        <div class="controls">
+            <button id="btnIsActive" class="primary">isActive()</button>
+            <button id="btnDestroy" class="danger">destroy()</button>
+            <button id="btnRecreate" class="success">Recreate Bridge</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Iframe</h2>
+        <iframe id="childFrame" src="iframe.html"></iframe>
+    </div>
+
+    <div class="section">
+        <h2>Console</h2>
+        <button id="btnClear" style="margin-bottom: 10px; background: #6c757d; color: white;">Clear</button>
+        <div id="console"></div>
+    </div>
+
+    <script type="module">
+        import { createParentBridge, RpcError, RpcTimeoutError, RpcMethodNotFoundError } from '../../dist/index.js';
+
+        const consoleEl = document.getElementById('console');
+        const statusEl = document.getElementById('bridgeStatus');
+        const iframe = document.getElementById('childFrame');
+
+        let bridge = null;
+
+        // Custom console logger
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span class="log-time">[${time}]</span>${escapeHtml(String(message))}`;
+            consoleEl.appendChild(entry);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function updateStatus() {
+            if (bridge && bridge.isActive()) {
+                statusEl.className = 'status active';
+                statusEl.textContent = 'Bridge: Active';
+            } else {
+                statusEl.className = 'status inactive';
+                statusEl.textContent = 'Bridge: Inactive';
+            }
+        }
+
+        // Parent methods that iframe can call
+        const parentHandlers = {
+            getUser: async (id) => {
+                log(`getUser called with id: ${id}`, 'info');
+                return { id, name: 'John Doe', age: 30 };
+            },
+            notify: (message) => {
+                log(`Notification received: ${message}`, 'success');
+            },
+            slowMethod: async () => {
+                log('slowMethod called - waiting 5 seconds...', 'warn');
+                await new Promise(r => setTimeout(r, 5000));
+                return 'slow response';
+            }
+        };
+
+        function createBridge() {
+            if (bridge) {
+                bridge.destroy();
+            }
+
+            bridge = createParentBridge(iframe, parentHandlers, {
+                debug: true,
+                channel: 'demo',
+                timeout: 3000
+            });
+
+            log('Bridge created with debug mode', 'success');
+            updateStatus();
+        }
+
+        // Initialize bridge when iframe loads
+        iframe.addEventListener('load', () => {
+            log('Iframe loaded', 'info');
+            createBridge();
+        });
+
+        // Button handlers
+        document.getElementById('btnGetStatus').addEventListener('click', async () => {
+            try {
+                log('Calling getStatus()...', 'info');
+                const status = await bridge.call.getStatus();
+                log(`Result: ${status}`, 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnInitialize').addEventListener('click', async () => {
+            try {
+                const theme = document.getElementById('themeInput').value;
+                log(`Calling initialize({ theme: "${theme}" })...`, 'info');
+                await bridge.call.initialize({ theme });
+                log('Initialize completed', 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnGetData').addEventListener('click', async () => {
+            try {
+                log('Calling getData()...', 'info');
+                const data = await bridge.call.getData();
+                log(`Result: ${JSON.stringify(data)}`, 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnInvoke').addEventListener('click', async () => {
+            try {
+                const method = document.getElementById('invokeMethod').value;
+                const argsStr = document.getElementById('invokeArgs').value;
+                const args = argsStr ? JSON.parse(`[${argsStr}]`) : [];
+                log(`Calling invoke("${method}", ${JSON.stringify(args)})...`, 'info');
+                const result = await bridge.invoke(method, ...args);
+                log(`Result: ${JSON.stringify(result)}`, 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnNotify').addEventListener('click', () => {
+            try {
+                const message = document.getElementById('notifyMessage').value;
+                log(`Sending notify("log", "${message}")...`, 'info');
+                bridge.notify('log', message);
+                log('Notification sent (fire-and-forget)', 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnIsActive').addEventListener('click', () => {
+            const active = bridge ? bridge.isActive() : false;
+            log(`isActive(): ${active}`, active ? 'success' : 'warn');
+            updateStatus();
+        });
+
+        document.getElementById('btnDestroy').addEventListener('click', () => {
+            if (bridge) {
+                bridge.destroy();
+                log('Bridge destroyed', 'warn');
+                updateStatus();
+            }
+        });
+
+        document.getElementById('btnRecreate').addEventListener('click', () => {
+            createBridge();
+        });
+
+        document.getElementById('btnClear').addEventListener('click', () => {
+            consoleEl.innerHTML = '';
+        });
+
+        log('Parent page loaded. Waiting for iframe...', 'info');
+    </script>
+</body>
+</html>

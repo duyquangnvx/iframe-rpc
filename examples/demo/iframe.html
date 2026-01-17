@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iframe-rpc Demo - Iframe</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 15px; background: #fafafa; }
+        h1 { font-size: 18px; margin-bottom: 8px; color: #333; }
+        .status { padding: 6px 10px; border-radius: 4px; margin-bottom: 12px; font-size: 12px; }
+        .status.active { background: #d4edda; color: #155724; }
+        .status.inactive { background: #f8d7da; color: #721c24; }
+        .section { background: white; padding: 12px; border-radius: 6px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .section h2 { font-size: 12px; color: #666; margin-bottom: 8px; text-transform: uppercase; }
+        .controls { display: flex; flex-wrap: wrap; gap: 6px; }
+        button { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+        button.primary { background: #007bff; color: white; }
+        button.primary:hover { background: #0056b3; }
+        button.success { background: #28a745; color: white; }
+        button.success:hover { background: #1e7e34; }
+        button.warning { background: #ffc107; color: #212529; }
+        button.warning:hover { background: #d39e00; }
+        button.danger { background: #dc3545; color: white; }
+        button.danger:hover { background: #bd2130; }
+        input { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; width: 80px; }
+        .input-group { display: flex; gap: 6px; align-items: center; }
+        #console { background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 4px; height: 120px; overflow-y: auto; font-family: 'Monaco', 'Menlo', monospace; font-size: 11px; }
+        .log-entry { margin-bottom: 3px; border-bottom: 1px solid #333; padding-bottom: 3px; }
+        .log-entry.info { color: #9cdcfe; }
+        .log-entry.success { color: #4ec9b0; }
+        .log-entry.error { color: #f48771; }
+        .log-entry.warn { color: #dcdcaa; }
+        .log-time { color: #666; margin-right: 6px; }
+        .theme-indicator { padding: 4px 8px; border-radius: 4px; font-size: 11px; display: inline-block; }
+        .theme-indicator.light { background: #fff; border: 1px solid #ddd; color: #333; }
+        .theme-indicator.dark { background: #333; color: #fff; }
+    </style>
+</head>
+<body>
+    <h1>Iframe Content</h1>
+    <div id="bridgeStatus" class="status inactive">Bridge: Not initialized</div>
+    <div>Current theme: <span id="themeIndicator" class="theme-indicator light">light</span></div>
+
+    <div class="section">
+        <h2>Call Parent Methods</h2>
+        <div class="controls">
+            <div class="input-group">
+                <input type="text" id="userIdInput" value="123" placeholder="user ID">
+                <button id="btnGetUser" class="primary">call.getUser(id)</button>
+            </div>
+            <button id="btnSlowMethod" class="warning">call.slowMethod() (timeout)</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Send Notifications</h2>
+        <div class="controls">
+            <div class="input-group">
+                <input type="text" id="notifyMessage" value="Hello from iframe!" style="width: 120px;">
+                <button id="btnNotify" class="success">notify('notify', msg)</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Error Testing</h2>
+        <div class="controls">
+            <button id="btnMethodNotFound" class="danger">Call non-existent method</button>
+            <button id="btnThrowError" class="danger">Call method that throws</button>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Console</h2>
+        <div id="console"></div>
+    </div>
+
+    <script type="module">
+        import { createIframeBridge, RpcError, RpcTimeoutError, RpcMethodNotFoundError } from '../../dist/index.js';
+
+        const consoleEl = document.getElementById('console');
+        const statusEl = document.getElementById('bridgeStatus');
+        const themeIndicator = document.getElementById('themeIndicator');
+
+        let bridge = null;
+        let currentTheme = 'light';
+
+        // Custom console logger
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span class="log-time">[${time}]</span>${escapeHtml(String(message))}`;
+            consoleEl.appendChild(entry);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function updateStatus() {
+            if (bridge && bridge.isActive()) {
+                statusEl.className = 'status active';
+                statusEl.textContent = 'Bridge: Active';
+            } else {
+                statusEl.className = 'status inactive';
+                statusEl.textContent = 'Bridge: Inactive';
+            }
+        }
+
+        function updateTheme(theme) {
+            currentTheme = theme;
+            themeIndicator.textContent = theme;
+            themeIndicator.className = `theme-indicator ${theme}`;
+            if (theme === 'dark') {
+                document.body.style.background = '#2d2d2d';
+                document.body.style.color = '#fff';
+            } else {
+                document.body.style.background = '#fafafa';
+                document.body.style.color = '#333';
+            }
+        }
+
+        // Iframe methods that parent can call
+        const iframeHandlers = {
+            initialize: async (config) => {
+                log(`initialize called with: ${JSON.stringify(config)}`, 'info');
+                if (config.theme) {
+                    updateTheme(config.theme);
+                }
+                log('Initialization complete', 'success');
+            },
+            getStatus: async () => {
+                log('getStatus called', 'info');
+                return 'ready';
+            },
+            getData: async () => {
+                log('getData called', 'info');
+                return { items: [1, 2, 3], timestamp: Date.now() };
+            },
+            log: (message) => {
+                log(`Notification from parent: ${message}`, 'success');
+            },
+            throwError: async () => {
+                log('throwError called - will throw!', 'warn');
+                throw new Error('Intentional error for testing');
+            }
+        };
+
+        // Create bridge on load
+        try {
+            bridge = createIframeBridge(iframeHandlers, {
+                debug: true,
+                channel: 'demo',
+                timeout: 3000
+            });
+            log('Bridge created with debug mode', 'success');
+            updateStatus();
+        } catch (e) {
+            log(`Failed to create bridge: ${e.message}`, 'error');
+        }
+
+        // Button handlers
+        document.getElementById('btnGetUser').addEventListener('click', async () => {
+            try {
+                const id = document.getElementById('userIdInput').value;
+                log(`Calling getUser("${id}")...`, 'info');
+                const user = await bridge.call.getUser(id);
+                log(`Result: ${JSON.stringify(user)}`, 'success');
+            } catch (e) {
+                if (e instanceof RpcTimeoutError) {
+                    log(`Timeout: ${e.message}`, 'error');
+                } else if (e instanceof RpcMethodNotFoundError) {
+                    log(`Method not found: ${e.message}`, 'error');
+                } else {
+                    log(`Error: ${e.message}`, 'error');
+                }
+            }
+        });
+
+        document.getElementById('btnSlowMethod').addEventListener('click', async () => {
+            try {
+                log('Calling slowMethod() - this will timeout after 3s...', 'warn');
+                const result = await bridge.call.slowMethod();
+                log(`Result: ${result}`, 'success');
+            } catch (e) {
+                if (e instanceof RpcTimeoutError) {
+                    log(`Timeout (expected): ${e.message}`, 'error');
+                } else {
+                    log(`Error: ${e.message}`, 'error');
+                }
+            }
+        });
+
+        document.getElementById('btnNotify').addEventListener('click', () => {
+            try {
+                const message = document.getElementById('notifyMessage').value;
+                log(`Sending notify("notify", "${message}")...`, 'info');
+                bridge.notify('notify', message);
+                log('Notification sent', 'success');
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('btnMethodNotFound').addEventListener('click', async () => {
+            try {
+                log('Calling nonExistentMethod()...', 'warn');
+                await bridge.call.nonExistentMethod();
+            } catch (e) {
+                if (e instanceof RpcMethodNotFoundError) {
+                    log(`Method not found (expected): ${e.message}`, 'error');
+                } else {
+                    log(`Error: ${e.message}`, 'error');
+                }
+            }
+        });
+
+        document.getElementById('btnThrowError').addEventListener('click', async () => {
+            try {
+                log('Calling parent throwError()...', 'warn');
+                await bridge.call.throwError();
+            } catch (e) {
+                log(`Error caught (expected): ${e.message}`, 'error');
+            }
+        });
+
+        log('Iframe loaded and bridge initialized', 'info');
+    </script>
+</body>
+</html>
