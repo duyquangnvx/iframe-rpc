@@ -145,6 +145,8 @@ export interface BridgeOptions {
     channel?: string;
     /** Enable debug logging */
     debug?: boolean;
+    /** Include stack traces in error responses. Default: false (security) */
+    includeStackTraces?: boolean;
 }
 
 const DEFAULT_OPTIONS: Required<BridgeOptions> = {
@@ -152,6 +154,7 @@ const DEFAULT_OPTIONS: Required<BridgeOptions> = {
     targetOrigin: '*',
     channel: 'default',
     debug: false,
+    includeStackTraces: false,
 };
 
 // ============================================================================
@@ -349,11 +352,10 @@ function createBridge<
             return;
         }
 
-        try {
-            (handler as AnyMethod)(...message.args);
-        } catch (error) {
-            logger.error('Error in fire-and-forget handler:', error);
-        }
+        // Handle both sync and async handlers, catching any rejections
+        Promise.resolve()
+            .then(() => (handler as AnyMethod)(...message.args))
+            .catch((error) => logger.error('Error in fire-and-forget handler:', error));
     };
 
     const sendMessage = (targetWindow: Window, message: RpcMessage) => {
@@ -381,7 +383,8 @@ function createBridge<
             error: {
                 message: error.message,
                 ...(error instanceof RpcError && error.code ? { code: error.code } : {}),
-                ...(error.stack ? { stack: error.stack } : {}),
+                // Only include stack traces if explicitly enabled (security consideration)
+                ...(options.includeStackTraces && error.stack ? { stack: error.stack } : {}),
             },
         };
         sendMessage(targetWindow, message);
