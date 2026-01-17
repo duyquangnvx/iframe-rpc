@@ -1,0 +1,164 @@
+# window-iframe-bridge
+
+Type-safe bidirectional RPC communication between parent window and iframe.
+
+## Features
+
+- **Type-safe RPC**: Full TypeScript inference for method parameters and return types
+- **Bidirectional**: Both parent and iframe can call methods on each other
+- **Fire-and-forget**: Support for one-way notifications without waiting for response
+- **Timeout handling**: Configurable timeouts with automatic cleanup
+- **Channel isolation**: Multiple independent bridges on the same page
+- **Zero dependencies**: Lightweight with no runtime dependencies
+
+## Installation
+
+```bash
+npm install window-iframe-bridge
+# or
+pnpm add window-iframe-bridge
+# or
+yarn add window-iframe-bridge
+```
+
+## Quick Start
+
+### 1. Define your API contracts
+
+```typescript
+// Shared types (e.g., shared/types.ts)
+type ParentMethods = {
+  getUser: (id: string) => Promise<{ name: string; age: number }>;
+  notify: (message: string) => void;
+};
+
+type IframeMethods = {
+  initialize: (config: { theme: string }) => Promise<void>;
+  getStatus: () => Promise<'ready' | 'loading'>;
+};
+```
+
+### 2. Set up the parent window
+
+```typescript
+import { createParentBridge } from 'window-iframe-bridge';
+
+const iframe = document.getElementById('my-iframe') as HTMLIFrameElement;
+
+const bridge = createParentBridge<ParentMethods, IframeMethods>(iframe, {
+  getUser: async (id) => ({ name: 'John', age: 30 }),
+  notify: (message) => console.log('Notification:', message),
+});
+
+// Call iframe methods with full type safety
+const status = await bridge.call.getStatus();
+await bridge.call.initialize({ theme: 'dark' });
+```
+
+### 3. Set up the iframe
+
+```typescript
+import { createIframeBridge } from 'window-iframe-bridge';
+
+const bridge = createIframeBridge<IframeMethods, ParentMethods>({
+  initialize: async (config) => {
+    document.body.className = config.theme;
+  },
+  getStatus: async () => 'ready',
+});
+
+// Call parent methods with full type safety
+const user = await bridge.call.getUser('123');
+bridge.notify('logEvent', 'iframe-loaded'); // Fire-and-forget
+```
+
+## API Reference
+
+### `createParentBridge<TLocal, TRemote>(iframe, handlers, options?)`
+
+Creates a bridge in the parent window to communicate with an iframe.
+
+**Parameters:**
+- `iframe`: `HTMLIFrameElement` - The iframe to communicate with
+- `handlers`: `TLocal` - Object containing methods the iframe can call
+- `options?`: `BridgeOptions` - Configuration options
+
+**Returns:** `Bridge<TLocal, TRemote>`
+
+### `createIframeBridge<TLocal, TRemote>(handlers, options?)`
+
+Creates a bridge in the iframe to communicate with the parent window.
+
+**Parameters:**
+- `handlers`: `TLocal` - Object containing methods the parent can call
+- `options?`: `BridgeOptions` - Configuration options
+
+**Returns:** `Bridge<TLocal, TRemote>`
+
+### `BridgeOptions`
+
+```typescript
+interface BridgeOptions {
+  timeout?: number;       // RPC timeout in ms (default: 30000)
+  targetOrigin?: string;  // postMessage target origin (default: '*')
+  channel?: string;       // Channel name for isolation (default: 'default')
+  debug?: boolean;        // Enable debug logging (default: false)
+}
+```
+
+### `Bridge<TLocal, TRemote>`
+
+```typescript
+interface Bridge<TLocal, TRemote> {
+  call: CallProxy<TRemote>;        // Type-safe proxy for calling remote methods
+  notify: (method, ...args) => void; // Fire-and-forget calls
+  destroy: () => void;              // Clean up and stop listening
+  isActive: () => boolean;          // Check if bridge is active
+}
+```
+
+## Error Handling
+
+The library provides typed error classes:
+
+```typescript
+import { RpcError, RpcTimeoutError, RpcMethodNotFoundError } from 'window-iframe-bridge';
+
+try {
+  await bridge.call.someMethod();
+} catch (error) {
+  if (error instanceof RpcTimeoutError) {
+    console.log('Call timed out');
+  } else if (error instanceof RpcMethodNotFoundError) {
+    console.log('Method not found on remote side');
+  } else if (error instanceof RpcError) {
+    console.log('RPC error:', error.message, error.code);
+  }
+}
+```
+
+## Channel Isolation
+
+Run multiple independent bridges on the same page:
+
+```typescript
+// Widget A
+const bridgeA = createParentBridge(iframeA, handlersA, { channel: 'widget-a' });
+
+// Widget B (won't interfere with Widget A)
+const bridgeB = createParentBridge(iframeB, handlersB, { channel: 'widget-b' });
+```
+
+## Security Considerations
+
+By default, `targetOrigin` is set to `'*'` which allows communication with any origin. For production, you should specify the exact origin:
+
+```typescript
+const bridge = createParentBridge(iframe, handlers, {
+  targetOrigin: 'https://trusted-domain.com',
+});
+```
+
+## License
+
+MIT
