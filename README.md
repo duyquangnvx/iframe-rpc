@@ -1,4 +1,4 @@
-# window-iframe-bridge
+# @duyquangnvx/iframe-rpc
 
 Type-safe bidirectional RPC communication between parent window and iframe.
 
@@ -14,11 +14,11 @@ Type-safe bidirectional RPC communication between parent window and iframe.
 ## Installation
 
 ```bash
-npm install window-iframe-bridge
+npm install @duyquangnvx/iframe-rpc
 # or
-pnpm add window-iframe-bridge
+pnpm add @duyquangnvx/iframe-rpc
 # or
-yarn add window-iframe-bridge
+yarn add @duyquangnvx/iframe-rpc
 ```
 
 ## Quick Start
@@ -41,7 +41,7 @@ type IframeMethods = {
 ### 2. Set up the parent window
 
 ```typescript
-import { createParentBridge } from 'window-iframe-bridge';
+import { createParentBridge } from '@duyquangnvx/iframe-rpc';
 
 const iframe = document.getElementById('my-iframe') as HTMLIFrameElement;
 
@@ -58,7 +58,7 @@ await bridge.call.initialize({ theme: 'dark' });
 ### 3. Set up the iframe
 
 ```typescript
-import { createIframeBridge } from 'window-iframe-bridge';
+import { createIframeBridge } from '@duyquangnvx/iframe-rpc';
 
 const bridge = createIframeBridge<IframeMethods, ParentMethods>({
   initialize: async (config) => {
@@ -138,7 +138,7 @@ Both are fully type-safe. Use `call` for static calls, `invoke` when method name
 The library provides typed error classes:
 
 ```typescript
-import { RpcError, RpcTimeoutError, RpcMethodNotFoundError } from 'window-iframe-bridge';
+import { RpcError, RpcTimeoutError, RpcMethodNotFoundError } from '@duyquangnvx/iframe-rpc';
 
 try {
   await bridge.call.someMethod();

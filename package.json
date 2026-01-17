@@ -1,5 +1,5 @@
 {
-  "name": "window-iframe-bridge",
+  "name": "@duyquangnvx/iframe-rpc",
   "version": "0.1.0",
   "description": "Type-safe bidirectional RPC communication between parent window and iframe",
   "type": "module",
@@ -43,16 +43,19 @@
     "typescript",
     "micro-frontend"
   ],
-  "author": "",
+  "author": "duyquangnvx",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "git+https://github.com/duyquangnvx/iframe-rpc.git"
   },
   "bugs": {
-    "url": ""
+    "url": "https://github.com/duyquangnvx/iframe-rpc/issues"
   },
-  "homepage": "",
+  "homepage": "https://github.com/duyquangnvx/iframe-rpc#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
