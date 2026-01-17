@@ -31,7 +31,9 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "demo": "pnpm build && npx serve . -p 3000",
+    "demo:open": "pnpm build && npx serve . -p 3000 -o /examples/demo/parent.html"
   },
   "keywords": [
     "iframe",
