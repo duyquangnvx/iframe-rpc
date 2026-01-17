@@ -205,6 +205,12 @@ export interface Bridge<
     /** Proxy object to call remote methods with full type safety */
     call: CallProxy<TRemote>;
 
+    /** Call remote method by name (for dynamic method calls) */
+    invoke: <K extends keyof TRemote>(
+        method: K,
+        ...args: Parameters<TRemote[K]>
+    ) => Promise<UnwrapPromise<ReturnType<TRemote[K]>>>;
+
     /** Fire-and-forget call (no response expected) */
     notify: <K extends VoidMethods<TRemote>>(
         method: K,
@@ -412,6 +418,8 @@ function createBridge<
 
     return {
         call,
+        invoke: <K extends keyof TRemote>(method: K, ...args: Parameters<TRemote[K]>) =>
+            callMethod(method, args),
         notify,
         destroy: () => {
             isDestroyed = true;

@@ -250,6 +250,57 @@ describe('createParentBridge', () => {
     await expect(bridge.call.testMethod()).rejects.toThrow('Bridge has been destroyed');
   });
 
+  it('should call remote method using invoke', async () => {
+    type RemoteMethods = {
+      getUser: (id: string) => Promise<{ name: string }>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {}
+    );
+
+    let sentMessage: any;
+    (mockIframe.contentWindow.postMessage as any).mockImplementation((msg: any) => {
+      sentMessage = msg;
+    });
+
+    const resultPromise = bridge.invoke('getUser', '123');
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    const responseEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.RESPONSE,
+        channel: 'default',
+        id: sentMessage.id,
+        result: { name: 'John' },
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+
+    messageListeners.forEach((l) => l(responseEvent));
+
+    const result = await resultPromise;
+    expect(result).toEqual({ name: 'John' });
+  });
+
+  it('should reject invoke after bridge is destroyed', async () => {
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {}
+    );
+
+    bridge.destroy();
+
+    await expect(bridge.invoke('testMethod')).rejects.toThrow('Bridge has been destroyed');
+  });
+
   it('should send fire-and-forget messages', () => {
     type RemoteMethods = {
       logEvent: (event: string) => void;
@@ -374,7 +425,7 @@ describe('createIframeBridge', () => {
 
   it('should create bridge when in iframe', () => {
     const handlers = {
-      initialize: async () => {},
+      initialize: async () => { },
     };
 
     const bridge = createIframeBridge(handlers);
@@ -401,7 +452,7 @@ describe('Message Filtering', () => {
       }
     });
 
-    vi.spyOn(window, 'removeEventListener').mockImplementation(() => {});
+    vi.spyOn(window, 'removeEventListener').mockImplementation(() => { });
   });
 
   afterEach(() => {

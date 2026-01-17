@@ -110,12 +110,28 @@ interface BridgeOptions {
 
 ```typescript
 interface Bridge<TLocal, TRemote> {
-  call: CallProxy<TRemote>;        // Type-safe proxy for calling remote methods
-  notify: (method, ...args) => void; // Fire-and-forget calls
-  destroy: () => void;              // Clean up and stop listening
-  isActive: () => boolean;          // Check if bridge is active
+  call: CallProxy<TRemote>;           // Type-safe proxy for calling remote methods
+  invoke: (method, ...args) => Promise; // Call by method name (for dynamic calls)
+  notify: (method, ...args) => void;  // Fire-and-forget calls
+  destroy: () => void;                // Clean up and stop listening
+  isActive: () => boolean;            // Check if bridge is active
 }
 ```
+
+### Calling Methods
+
+Two ways to call remote methods:
+
+```typescript
+// 1. Proxy API (recommended) - best IDE support
+const user = await bridge.call.getUser('123');
+
+// 2. Invoke API - for dynamic method names
+const methodName = 'getUser';
+const user = await bridge.invoke(methodName, '123');
+```
+
+Both are fully type-safe. Use `call` for static calls, `invoke` when method name is dynamic.
 
 ## Error Handling
 
