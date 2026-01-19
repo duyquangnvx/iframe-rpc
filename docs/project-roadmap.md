@@ -37,7 +37,7 @@ A lightweight TypeScript library for type-safe bidirectional RPC between parent 
 - [ ] Connection lifecycle events (connect, disconnect, reconnect)
 - [ ] Batch call support (multiple calls in single message)
 - [ ] Message compression for large payloads
-- [ ] Retry mechanism for failed calls
+- [x] Retry mechanism for failed calls
 
 ### v0.3.0 - Developer Experience (Planned)
 - [ ] DevTools extension for message inspection
