@@ -136,6 +136,20 @@ export class RpcMethodNotFoundError extends RpcError {
 // Configuration
 // ============================================================================
 
+/** Configuration for retry behavior */
+export interface RetryOptions {
+    /** Maximum number of retry attempts. Default: 0 (no retries) */
+    maxRetries?: number;
+    /** Initial delay between retries in ms. Default: 1000 */
+    retryDelay?: number;
+    /** Backoff multiplier for exponential backoff. Default: 2 */
+    retryBackoff?: number;
+    /** Maximum delay between retries in ms. Default: 30000 */
+    maxRetryDelay?: number;
+    /** Custom function to determine if an error is retryable. Default: retries timeouts only */
+    isRetryable?: (error: Error) => boolean;
+}
+
 export interface BridgeOptions {
     /** Timeout for RPC calls in milliseconds. Default: 30000 */
     timeout?: number;
@@ -147,14 +161,29 @@ export interface BridgeOptions {
     debug?: boolean;
     /** Include stack traces in error responses. Default: false (security) */
     includeStackTraces?: boolean;
+    /** Retry configuration for failed calls */
+    retry?: RetryOptions;
 }
 
-const DEFAULT_OPTIONS: Required<BridgeOptions> = {
+const DEFAULT_RETRY_OPTIONS: Required<RetryOptions> = {
+    maxRetries: 0,
+    retryDelay: 1000,
+    retryBackoff: 2,
+    maxRetryDelay: 30000,
+    isRetryable: (error: Error) => error instanceof RpcTimeoutError,
+};
+
+type ResolvedBridgeOptions = Omit<Required<BridgeOptions>, 'retry'> & {
+    retry: Required<RetryOptions>;
+};
+
+const DEFAULT_OPTIONS: ResolvedBridgeOptions = {
     timeout: 30000,
     targetOrigin: '*',
     channel: 'default',
     debug: false,
     includeStackTraces: false,
+    retry: DEFAULT_RETRY_OPTIONS,
 };
 
 // ============================================================================
@@ -259,7 +288,7 @@ function createBridge<
 >(
     target: Window,
     handlers: TLocal,
-    options: Required<BridgeOptions>,
+    options: ResolvedBridgeOptions,
     side: 'parent' | 'iframe'
 ): Bridge<TLocal, TRemote> {
     const pendingRequests = new Map<string, PendingRequest>();
@@ -390,14 +419,11 @@ function createBridge<
         sendMessage(targetWindow, message);
     };
 
-    const callMethod = <K extends keyof TRemote>(
+    // Execute a single RPC call (without retry)
+    const executeCall = <K extends keyof TRemote>(
         method: K,
         args: unknown[]
     ): Promise<UnwrapPromise<ReturnType<TRemote[K]>>> => {
-        if (isDestroyed) {
-            return Promise.reject(new RpcError('Bridge has been destroyed', 'DESTROYED'));
-        }
-
         return new Promise((resolve, reject) => {
             const id = generateId();
 
@@ -423,6 +449,70 @@ function createBridge<
 
             sendMessage(target, message);
         });
+    };
+
+    // Calculate delay for retry attempt with exponential backoff
+    const calculateRetryDelay = (attempt: number): number => {
+        const { retryDelay, retryBackoff, maxRetryDelay } = options.retry;
+        const delay = retryDelay * Math.pow(retryBackoff, attempt);
+        return Math.min(delay, maxRetryDelay);
+    };
+
+    // Sleep helper for retry delays
+    const sleep = (ms: number): Promise<void> =>
+        new Promise(resolve => setTimeout(resolve, ms));
+
+    const callMethod = <K extends keyof TRemote>(
+        method: K,
+        args: unknown[]
+    ): Promise<UnwrapPromise<ReturnType<TRemote[K]>>> => {
+        if (isDestroyed) {
+            return Promise.reject(new RpcError('Bridge has been destroyed', 'DESTROYED'));
+        }
+
+        const { maxRetries, isRetryable } = options.retry;
+
+        // If no retries configured, execute directly
+        if (maxRetries <= 0) {
+            return executeCall(method, args);
+        }
+
+        // Execute with retry logic
+        return (async () => {
+            let lastError: Error | undefined;
+
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                try {
+                    return await executeCall(method, args);
+                } catch (error) {
+                    lastError = error instanceof Error ? error : new Error(String(error));
+
+                    // Check if we should retry
+                    const isLastAttempt = attempt === maxRetries;
+                    const shouldRetry = !isLastAttempt && isRetryable(lastError);
+
+                    if (!shouldRetry) {
+                        throw lastError;
+                    }
+
+                    // Calculate delay and wait before retrying
+                    const delay = calculateRetryDelay(attempt);
+                    logger.log(
+                        `Retry ${attempt + 1}/${maxRetries} for "${String(method)}" after ${delay}ms`,
+                        `(${lastError.message})`
+                    );
+                    await sleep(delay);
+
+                    // Check if bridge was destroyed during the delay
+                    if (isDestroyed) {
+                        throw new RpcError('Bridge has been destroyed', 'DESTROYED');
+                    }
+                }
+            }
+
+            // Should not reach here, but TypeScript needs this
+            throw lastError ?? new RpcError('Unknown error during retry', 'UNKNOWN');
+        })();
     };
 
     const notify = <K extends VoidMethods<TRemote>>(
@@ -503,6 +593,18 @@ function createBridge<
  * // Call iframe methods with full type safety
  * const result = await bridge.call.iframeMethod(arg1, arg2);
  */
+// Merge options with defaults, including nested retry options
+function mergeOptions(options: BridgeOptions): ResolvedBridgeOptions {
+    return {
+        ...DEFAULT_OPTIONS,
+        ...options,
+        retry: {
+            ...DEFAULT_RETRY_OPTIONS,
+            ...options.retry,
+        },
+    };
+}
+
 export function createParentBridge<
     TLocal extends MethodContract,
     TRemote extends MethodContract
@@ -515,7 +617,7 @@ export function createParentBridge<
         throw new Error('Iframe contentWindow is not available. Make sure the iframe is loaded.');
     }
 
-    const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+    const mergedOptions = mergeOptions(options);
     warnIfInsecureOrigin(mergedOptions);
 
     return createBridge<TLocal, TRemote>(
@@ -555,7 +657,7 @@ export function createIframeBridge<
         throw new Error('Not running inside an iframe');
     }
 
-    const mergedOptions = { ...DEFAULT_OPTIONS, ...options };
+    const mergedOptions = mergeOptions(options);
     warnIfInsecureOrigin(mergedOptions);
 
     return createBridge<TLocal, TRemote>(
