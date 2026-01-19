@@ -103,6 +103,15 @@ interface BridgeOptions {
   targetOrigin?: string;  // postMessage target origin (default: '*')
   channel?: string;       // Channel name for isolation (default: 'default')
   debug?: boolean;        // Enable debug logging (default: false)
+  retry?: RetryOptions;   // Retry configuration for failed calls
+}
+
+interface RetryOptions {
+  maxRetries?: number;    // Max retry attempts (default: 0 - no retries)
+  retryDelay?: number;    // Initial delay between retries in ms (default: 1000)
+  retryBackoff?: number;  // Backoff multiplier (default: 2)
+  maxRetryDelay?: number; // Max delay cap in ms (default: 30000)
+  isRetryable?: (error: Error) => boolean;  // Custom retry condition
 }
 ```
 
@@ -151,6 +160,38 @@ try {
     console.log('RPC error:', error.message, error.code);
   }
 }
+```
+
+## Retry Configuration
+
+Configure automatic retries for failed calls with exponential backoff:
+
+```typescript
+const bridge = createParentBridge(iframe, handlers, {
+  timeout: 5000,
+  retry: {
+    maxRetries: 3,           // Retry up to 3 times
+    retryDelay: 1000,        // Start with 1s delay
+    retryBackoff: 2,         // Double delay each retry (1s, 2s, 4s)
+    maxRetryDelay: 10000,    // Cap delay at 10s
+  },
+});
+```
+
+By default, only timeout errors are retried. Customize with `isRetryable`:
+
+```typescript
+const bridge = createParentBridge(iframe, handlers, {
+  retry: {
+    maxRetries: 3,
+    isRetryable: (error) => {
+      // Retry on timeout or specific error codes
+      if (error instanceof RpcTimeoutError) return true;
+      if (error instanceof RpcError && error.code === 'TEMPORARY_ERROR') return true;
+      return false;
+    },
+  },
+});
 ```
 
 ## Channel Isolation
