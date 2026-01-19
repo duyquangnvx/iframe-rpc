@@ -649,3 +649,416 @@ describe('Message Filtering', () => {
     expect(handlers.test).not.toHaveBeenCalled();
   });
 });
+
+describe('Retry Mechanism', () => {
+  let mockIframe: ReturnType<typeof createMockIframe>;
+  let messageListeners: ((event: MessageEvent) => void)[];
+
+  beforeEach(() => {
+    mockIframe = createMockIframe();
+    messageListeners = [];
+
+    vi.spyOn(window, 'addEventListener').mockImplementation((type, listener) => {
+      if (type === 'message') {
+        messageListeners.push(listener as (event: MessageEvent) => void);
+      }
+    });
+
+    vi.spyOn(window, 'removeEventListener').mockImplementation(() => { });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should not retry when maxRetries is 0 (default)', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      { timeout: 100 }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // Advance time past timeout
+    vi.advanceTimersByTime(150);
+
+    await expect(resultPromise).rejects.toThrow(RpcTimeoutError);
+    // Should only have one postMessage call (no retries)
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('should retry on timeout when maxRetries > 0', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        timeout: 100,
+        retry: {
+          maxRetries: 2,
+          retryDelay: 50,
+          retryBackoff: 1, // No backoff for easier testing
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // First attempt times out
+    vi.advanceTimersByTime(150);
+    await Promise.resolve(); // Allow microtasks
+
+    // Wait for first retry delay
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Second attempt times out
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
+
+    // Wait for second retry delay
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Third attempt (last) times out
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
+
+    // All retries exhausted
+    await expect(resultPromise).rejects.toThrow(RpcTimeoutError);
+
+    // Should have 3 postMessage calls (1 initial + 2 retries)
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
+  it('should succeed on retry if response arrives', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const sentMessages: any[] = [];
+    (mockIframe.contentWindow.postMessage as any).mockImplementation((msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        timeout: 100,
+        retry: {
+          maxRetries: 2,
+          retryDelay: 50,
+          retryBackoff: 1,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // First attempt times out
+    vi.advanceTimersByTime(150);
+    await Promise.resolve();
+
+    // Wait for retry delay
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Second attempt - simulate successful response
+    const secondMessage = sentMessages[1];
+    const responseEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.RESPONSE,
+        channel: 'default',
+        id: secondMessage.id,
+        result: 'success',
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+
+    messageListeners.forEach((l) => l(responseEvent));
+
+    const result = await resultPromise;
+    expect(result).toBe('success');
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it('should use exponential backoff for retry delays', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        timeout: 50,
+        retry: {
+          maxRetries: 3,
+          retryDelay: 100,
+          retryBackoff: 2,
+          maxRetryDelay: 1000,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // First attempt times out at 50ms
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(1);
+
+    // First retry delay: 100ms * 2^0 = 100ms
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(2);
+
+    // Second attempt times out
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Second retry delay: 100ms * 2^1 = 200ms
+    vi.advanceTimersByTime(200);
+    await Promise.resolve();
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(3);
+
+    // Third attempt times out
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Third retry delay: 100ms * 2^2 = 400ms
+    vi.advanceTimersByTime(400);
+    await Promise.resolve();
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(4);
+
+    // Final attempt times out
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    await expect(resultPromise).rejects.toThrow(RpcTimeoutError);
+
+    vi.useRealTimers();
+  });
+
+  it('should respect maxRetryDelay cap', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        timeout: 50,
+        retry: {
+          maxRetries: 2,
+          retryDelay: 100,
+          retryBackoff: 10, // Would be 1000ms on second retry, but capped
+          maxRetryDelay: 200,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // First timeout
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // First retry delay: min(100 * 10^0, 200) = 100ms
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+
+    // Second timeout
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Second retry delay: min(100 * 10^1, 200) = 200ms (capped)
+    vi.advanceTimersByTime(200);
+    await Promise.resolve();
+
+    // Third timeout (final attempt)
+    vi.advanceTimersByTime(50);
+
+    await expect(resultPromise).rejects.toThrow(RpcTimeoutError);
+
+    vi.useRealTimers();
+  });
+
+  it('should not retry non-retryable errors by default', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    let sentMessage: any;
+    (mockIframe.contentWindow.postMessage as any).mockImplementation((msg: any) => {
+      sentMessage = msg;
+    });
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        retry: {
+          maxRetries: 2,
+          retryDelay: 50,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Simulate an error response (not a timeout - should not be retried by default)
+    const errorEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.ERROR,
+        channel: 'default',
+        id: sentMessage.id,
+        error: {
+          message: 'Server error',
+          code: 'SERVER_ERROR',
+        },
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+
+    messageListeners.forEach((l) => l(errorEvent));
+
+    await expect(resultPromise).rejects.toThrow('Server error');
+    // Should only have 1 call - no retries for non-timeout errors
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('should use custom isRetryable function', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const sentMessages: any[] = [];
+    (mockIframe.contentWindow.postMessage as any).mockImplementation((msg: any) => {
+      sentMessages.push(msg);
+    });
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        retry: {
+          maxRetries: 2,
+          retryDelay: 50,
+          retryBackoff: 1,
+          // Custom: retry on any RpcError
+          isRetryable: (error) => error instanceof RpcError,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+    await vi.advanceTimersByTimeAsync(10);
+
+    // First attempt - error response
+    const errorEvent1 = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.ERROR,
+        channel: 'default',
+        id: sentMessages[0].id,
+        error: { message: 'Temporary error', code: 'TEMP_ERROR' },
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+    messageListeners.forEach((l) => l(errorEvent1));
+
+    // Wait for retry delay
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Second attempt - success
+    const responseEvent = new MessageEvent('message', {
+      data: {
+        __iframeRpc: true,
+        type: MESSAGE_TYPE.RESPONSE,
+        channel: 'default',
+        id: sentMessages[1].id,
+        result: 'success after retry',
+      },
+      source: mockIframe.contentWindow as unknown as Window,
+    });
+    messageListeners.forEach((l) => l(responseEvent));
+
+    const result = await resultPromise;
+    expect(result).toBe('success after retry');
+    expect(mockIframe.contentWindow.postMessage).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it('should abort retry if bridge is destroyed during delay', async () => {
+    vi.useFakeTimers();
+
+    type RemoteMethods = {
+      testMethod: () => Promise<string>;
+    };
+
+    const bridge = createParentBridge<Record<string, never>, RemoteMethods>(
+      mockIframe as unknown as HTMLIFrameElement,
+      {},
+      {
+        timeout: 50,
+        retry: {
+          maxRetries: 2,
+          retryDelay: 100,
+          retryBackoff: 1,
+        },
+      }
+    );
+
+    const resultPromise = bridge.call.testMethod();
+
+    // First timeout
+    vi.advanceTimersByTime(50);
+    await Promise.resolve();
+
+    // Destroy bridge during retry delay
+    vi.advanceTimersByTime(50); // Halfway through delay
+    bridge.destroy();
+    vi.advanceTimersByTime(50); // Complete delay
+
+    await expect(resultPromise).rejects.toThrow('Bridge has been destroyed');
+
+    vi.useRealTimers();
+  });
+});
